@@ -1,1 +1,15 @@
-
+{
+  "name": "yoвпрро",
+  "version": "1.0.0",
+  "description": "Краткое описание провиапвпнпвншвеекта",
+  "main": "макс.html",
+  "scripts": {
+    "build": "echo 'Building static site'",
+    "start": "serve -s ."
+  },
+  "author": "govno",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pzorin1171-star/Putin.git"
+  }
+}
