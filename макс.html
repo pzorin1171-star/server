@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Крестики-нолики онлайн</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 2.5em;
+        }
+
+        .game-id-section {
+            margin: 20px 0;
+        }
+
+        input {
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            width: 200px;
+            margin-right: 10px;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #5a6fd8;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .status.waiting {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status.playing {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .status.winner {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.loser {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 20px auto;
+            max-width: 300px;
+        }
+
+        .cell {
+            width: 100%;
+            aspect-ratio: 1;
+            background: #f8f9fa;
+            border: 3px solid #667eea;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .cell:hover {
+            background: #e9ecef;
+            transform: scale(1.05);
+        }
+
+        .cell.x {
+            color: #e74c3c;
+        }
+
+        .cell.o {
+            color: #3498db;
+        }
+
+        .cell.winning {
+            background: #2ecc71;
+            color: white;
+        }
+
+        .cell:disabled {
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .cell:disabled:hover {
+            background: #f8f9fa;
+        }
+
+        .restart-btn {
+            margin-top: 20px;
+            background: #27ae60;
+        }
+
+        .restart-btn:hover {
+            background: #219a52;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+            
+            input {
+                width: 100%;
+                margin-bottom: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Крестики-нолики</h1>
+        
+        <div id="connectionSection">
+            <div class="game-id-section">
+                <input type="text" id="gameIdInput" placeholder="ID игры" value="game-1">
+                <button onclick="connectToGame()">Присоединиться к игре</button>
+            </div>
+            <div id="connectionStatus">Введите ID игры и нажмите "Присоединиться"</div>
+        </div>
+
+        <div id="gameSection" class="hidden">
+            <div id="gameStatus" class="status"></div>
+            
+            <div class="board" id="gameBoard"></div>
+            
+            <div>
+                <div>Вы играете за: <span id="playerSymbol" style="font-weight: bold;"></span></div>
+                <div>Сейчас ходит: <span id="currentTurn" style="font-weight: bold;"></span></div>
+            </div>
+            
+            <button class="restart-btn" onclick="restartGame()">Начать новую игру</button>
+        </div>
+    </div>
+
+    <script>
+        // Конфигурация - замените на ваш URL бэкенда на Render
+        const BACKEND_URL = window.location.hostname === 'localhost' 
+            ? 'http://localhost:5000' 
+            : 'https://your-backend-url.onrender.com';
+        
+        let socket = null;
+        let currentGameId = '';
+        let playerSymbol = '';
+        let isMyTurn = false;
+        let currentTurn = 'X';
+
+        function connectToGame() {
+            const gameId = document.getElementById('gameIdInput').value.trim() || 'default';
+            currentGameId = gameId;
+            
+            // Инициализация Socket.IO соединения
+            socket = io(BACKEND_URL);
+            
+            socket.on('connect', () => {
+                updateConnectionStatus('Подключение установлено...', 'waiting');
+                socket.emit('join', { game_id: gameId });
+            });
+            
+            socket.on('waiting', (data) => {
+                updateConnectionStatus('Ожидаем второго игрока...', 'waiting');
+            });
+            
+            socket.on('game_start', (data) => {
+                playerSymbol = data.symbol;
+                isMyTurn = playerSymbol === 'X';
+                currentTurn = 'X';
+                
+                showGameSection();
+                initBoard(data.board);
+                updateGameStatus(isMyTurn ? 'Ваш ход! Ходите крестиками (X)' : 'Ход соперника...');
+            });
+            
+            socket.on('turn_update', (data) => {
+                currentTurn = data.turn;
+                isMyTurn = playerSymbol === currentTurn;
+                updateTurnDisplay();
+            });
+            
+            socket.on('move_made', (data) => {
+                updateBoard(data.board);
+                currentTurn = data.turn;
+                isMyTurn = playerSymbol === currentTurn;
+                updateTurnDisplay();
+            });
+            
+            socket.on('game_over', (data) => {
+                isMyTurn = false;
+                let message = '';
+                
+                if (data.winner === 'draw') {
+                    message = 'Ничья!';
+                    updateGameStatus(message, 'playing');
+                } else {
+                    const isWinner = data.winner === playerSymbol;
+                    message = isWinner ? 'Вы победили! 🎉' : 'Вы проиграли!';
+                    updateGameStatus(message, isWinner ? 'winner' : 'loser');
+                    
+                    // Подсветка выигрышной комбинации
+                    if (data.winning_cells) {
+                        highlightWinningCells(data.winning_cells);
+                    }
+                }
+                
+                // Автоматический рестарт через 5 секунд
+                setTimeout(() => {
+                    updateGameStatus('Новая игра начинается...', 'waiting');
+                }, 3000);
+            });
+            
+            socket.on('game_restarted', (data) => {
+                initBoard(data.board);
+                currentTurn = data.turn;
+                isMyTurn = playerSymbol === currentTurn;
+                updateGameStatus(isMyTurn ? 'Новая игра! Ваш ход!' : 'Новая игра! Ход соперника...');
+                updateTurnDisplay();
+            });
+            
+            socket.on('opponent_disconnected', () => {
+                updateGameStatus('Соперник отключился. Ожидаем нового игрока...', 'waiting');
+            });
+            
+            socket.on('error', (data) => {
+                updateGameStatus('Ошибка: ' + data.message, 'loser');
+            });
+            
+            socket.on('disconnect', () => {
+                updateConnectionStatus('Соединение потеряно. Переподключение...', 'waiting');
+            });
+        }
+
+        function initBoard(boardData) {
+            const board = document.getElementById('gameBoard');
+            board.innerHTML = '';
+            
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 3; j++) {
+                    const cell = document.createElement('button');
+                    cell.className = 'cell';
+                    cell.dataset.row = i;
+                    cell.dataset.col = j;
+                    cell.textContent = boardData[i][j] || '';
+                    cell.disabled = !isMyTurn || boardData[i][j] !== '';
+                    
+                    if (cell.textContent === 'X') cell.classList.add('x');
+                    if (cell.textContent === 'O') cell.classList.add('o');
+                    
+                    cell.addEventListener('click', () => makeMove(i, j));
+                    board.appendChild(cell);
+                }
+            }
+            
+            updateTurnDisplay();
+        }
+
+        function updateBoard(boardData) {
+            const cells = document.querySelectorAll('.cell');
+            cells.forEach(cell => {
+                const row = parseInt(cell.dataset.row);
+                const col = parseInt(cell.dataset.col);
+                const symbol = boardData[row][col];
+                
+                cell.textContent = symbol || '';
+                cell.disabled = !isMyTurn || symbol !== '';
+                
+                cell.classList.remove('x', 'o');
+                if (symbol === 'X') cell.classList.add('x');
+                if (symbol === 'O') cell.classList.add('o');
+            });
+        }
+
+        function highlightWinningCells(winningCells) {
+            winningCells.forEach(([row, col]) => {
+                const cell = document.querySelector(`.cell[data-row="${row}"][data-col="${col}"]`);
+                if (cell) {
+                    cell.classList.add('winning');
+                }
+            });
+        }
+
+        function makeMove(row, col) {
+            if (!isMyTurn) return;
+            
+            socket.emit('move', {
+                row: row,
+                col: col,
+                symbol: playerSymbol
+            });
+        }
+
+        function restartGame() {
+            socket.emit('restart_game');
+        }
+
+        function updateConnectionStatus(message, type = '') {
+            const statusElement = document.getElementById('connectionStatus');
+            statusElement.textContent = message;
+            statusElement.className = type ? `status ${type}` : 'status';
+        }
+
+        function updateGameStatus(message, type = '') {
+            const statusElement = document.getElementById('gameStatus');
+            statusElement.textContent = message;
+            statusElement.className = type ? `status ${type}` : 'status';
+        }
+
+        function updateTurnDisplay() {
+            document.getElementById('playerSymbol').textContent = playerSymbol;
+            document.getElementById('currentTurn').textContent = currentTurn;
+            document.getElementById('currentTurn').style.color = currentTurn === 'X' ? '#e74c3c' : '#3498db';
+        }
+
+        function showGameSection() {
+            document.getElementById('connectionSection').classList.add('hidden');
+            document.getElementById('gameSection').classList.remove('hidden');
+        }
+
+        // Автоподключение при загрузке с gameId из URL
+        window.addEventListener('load', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const gameIdFromUrl = urlParams.get('game');
+            if (gameIdFromUrl) {
+                document.getElementById('gameIdInput').value = gameIdFromUrl;
+                connectToGame();
+            }
+        });
+    </script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+</body>
+</html>
