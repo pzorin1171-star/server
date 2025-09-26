@@ -2,7 +2,7 @@
   "name": "yoвпрро",
   "version": "1.0.0",
   "description": "Краткое описание провиапвпнпвншвеекта",
-  "main": "макс.html",
+  "main": "index.html",
   "scripts": {
     "build": "echo 'Building static site'",
     "start": "serve -s ."
