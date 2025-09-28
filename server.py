@@ -1,14 +1,13 @@
-from flask import Flask
-from flask_socketio import SocketIO
+from flask import Flask, request
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import os
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'simple-secret-key'
+app.config['SECRET_KEY'] = 'tic-tac-toe-final-version'
 
-# Упрощенная инициализация SocketIO
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Хранилище игр
+# Простое хранилище игр
 games = {}
 
 @app.route('/')
@@ -17,113 +16,154 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Крестики-нолики MULTIPLAYER</title>
+        <title>Крестики-нолики ONLINE</title>
         <meta charset="UTF-8">
         <style>
-            body { font-family: Arial; text-align: center; margin: 20px; }
-            .container { max-width: 500px; margin: 0 auto; }
-            .board { display: grid; grid-template-columns: repeat(3, 80px); gap: 5px; margin: 20px auto; justify-content: center; }
-            .cell { width: 80px; height: 80px; border: 2px solid #333; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; }
-            .cell.x { color: red; }
-            .cell.o { color: blue; }
-            .status { margin: 10px; padding: 10px; border-radius: 5px; }
-            .online { background: #d4ffd4; }
-            .offline { background: #ffd4d4; }
-            input, button { padding: 8px; margin: 5px; }
+            body { font-family: Arial; text-align: center; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }
+            .container { background: white; max-width: 400px; margin: 0 auto; padding: 20px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+            h1 { color: #333; margin-bottom: 20px; }
+            .board { display: grid; grid-template-columns: repeat(3, 100px); gap: 5px; margin: 20px auto; justify-content: center; }
+            .cell { width: 100px; height: 100px; border: 3px solid #667eea; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: bold; cursor: pointer; background: #f8f9fa; transition: all 0.3s; }
+            .cell:hover { background: #e9ecef; transform: scale(1.05); }
+            .cell.x { color: #e74c3c; }
+            .cell.o { color: #3498db; }
+            .cell:disabled { cursor: not-allowed; transform: none; }
+            .cell:disabled:hover { background: #f8f9fa; }
+            .status { margin: 15px 0; padding: 15px; border-radius: 10px; font-size: 16px; font-weight: bold; }
+            .waiting { background: #fff3cd; color: #856404; }
+            .ready { background: #d4edda; color: #155724; }
+            .my-turn { background: #cce5ff; color: #004085; }
+            input, button { padding: 12px; margin: 5px; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; }
+            button { background: #667eea; color: white; cursor: pointer; transition: background 0.3s; }
+            button:hover { background: #5a6fd8; }
+            button:disabled { background: #ccc; cursor: not-allowed; }
+            .game-info { margin: 15px 0; font-size: 18px; }
+            .hidden { display: none; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🎮 Крестики-нолики ONLINE</h1>
-            <div id="status" class="status offline">Отключено</div>
+            <h1>🎮 Крестики-нолики</h1>
             
-            <div>
-                <input type="text" id="gameId" value="room1" placeholder="ID комнаты">
-                <button onclick="connectGame()">Присоединиться</button>
+            <div id="connectSection">
+                <div>
+                    <input type="text" id="roomInput" value="game1" placeholder="Название комнаты">
+                    <button onclick="connectToGame()">Присоединиться</button>
+                </div>
+                <div id="status" class="status waiting">Введите название комнаты и нажмите "Присоединиться"</div>
             </div>
             
-            <div id="gameInfo" style="display:none">
-                <div>Вы играете за: <span id="mySymbol" style="font-weight:bold">-</span></div>
-                <div>Сейчас ходит: <span id="turnInfo">-</span></div>
+            <div id="gameSection" class="hidden">
+                <div class="game-info">
+                    Вы играете за: <span id="playerSymbol" style="font-weight: bold;">-</span>
+                </div>
+                <div class="game-info">
+                    Статус: <span id="gameStatus">Ожидаем второго игрока...</span>
+                </div>
+                
+                <div class="board" id="gameBoard"></div>
+                
+                <div class="game-info">
+                    Сейчас ходит: <span id="turnInfo">-</span>
+                </div>
+                
+                <button onclick="resetGame()" id="resetBtn">Новая игра</button>
+                <button onclick="leaveGame()" style="background: #e74c3c;">Выйти из игры</button>
             </div>
-            
-            <div class="board" id="board"></div>
-            <button onclick="resetGame()" style="display:none" id="resetBtn">Новая игра</button>
         </div>
 
         <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
         <script>
             let socket = null;
-            let currentGameId = '';
+            let currentRoom = '';
             let mySymbol = '';
             let isMyTurn = false;
-            let board = ['','','','','','','','',''];
+            let gameActive = false;
+            let board = ['', '', '', '', '', '', '', '', ''];
+            
+            function connectToGame() {
+                currentRoom = document.getElementById('roomInput').value.trim() || 'default';
+                
+                if (socket) {
+                    socket.disconnect();
+                }
+                
+                socket = io();
+                
+                socket.on('connect', function() {
+                    updateStatus('Подключено к серверу!', 'ready');
+                    socket.emit('join', { room: currentRoom });
+                });
+                
+                socket.on('joined', function(data) {
+                    mySymbol = data.symbol;
+                    updateStatus(data.message, 'ready');
+                    document.getElementById('playerSymbol').textContent = mySymbol;
+                    document.getElementById('playerSymbol').style.color = mySymbol === 'X' ? '#e74c3c' : '#3498db';
+                    
+                    document.getElementById('connectSection').classList.add('hidden');
+                    document.getElementById('gameSection').classList.remove('hidden');
+                    
+                    createBoard();
+                });
+                
+                socket.on('game_start', function(data) {
+                    gameActive = true;
+                    board = data.board;
+                    isMyTurn = data.currentPlayer === mySymbol;
+                    updateBoard();
+                    updateGameStatus();
+                });
+                
+                socket.on('move_made', function(data) {
+                    board[data.index] = data.symbol;
+                    isMyTurn = data.nextPlayer === mySymbol;
+                    updateBoard();
+                    updateGameStatus();
+                });
+                
+                socket.on('game_over', function(data) {
+                    gameActive = false;
+                    if (data.winner === 'draw') {
+                        updateStatus('Ничья! Начинаем новую игру через 3 секунды...', 'waiting');
+                    } else {
+                        const won = data.winner === mySymbol;
+                        updateStatus(won ? 'Вы победили! 🎉' : 'Вы проиграли!', won ? 'ready' : 'waiting');
+                    }
+                });
+                
+                socket.on('player_joined', function(data) {
+                    updateStatus('Второй игрок присоединился! Игра начинается!', 'ready');
+                });
+                
+                socket.on('player_left', function(data) {
+                    gameActive = false;
+                    updateStatus('Соперник покинул игру. Ожидаем нового игрока...', 'waiting');
+                });
+                
+                socket.on('error', function(data) {
+                    updateStatus('Ошибка: ' + data.message, 'waiting');
+                });
+            }
             
             function createBoard() {
-                const boardEl = document.getElementById('board');
-                boardEl.innerHTML = '';
+                const boardElement = document.getElementById('gameBoard');
+                boardElement.innerHTML = '';
+                
                 for (let i = 0; i < 9; i++) {
                     const cell = document.createElement('div');
                     cell.className = 'cell';
                     cell.onclick = () => makeMove(i);
-                    boardEl.appendChild(cell);
+                    boardElement.appendChild(cell);
                 }
                 updateBoard();
             }
             
-            function connectGame() {
-                currentGameId = document.getElementById('gameId').value || 'default';
-                
-                socket = io();
-                
-                socket.on('connect', () => {
-                    document.getElementById('status').textContent = 'Подключено';
-                    document.getElementById('status').className = 'status online';
-                    socket.emit('join_game', {gameId: currentGameId});
-                });
-                
-                socket.on('player_assigned', (data) => {
-                    mySymbol = data.symbol;
-                    document.getElementById('mySymbol').textContent = mySymbol;
-                    document.getElementById('mySymbol').style.color = mySymbol === 'X' ? 'red' : 'blue';
-                    document.getElementById('gameInfo').style.display = 'block';
-                });
-                
-                socket.on('game_state', (data) => {
-                    board = data.board;
-                    isMyTurn = data.currentTurn === mySymbol;
-                    updateBoard();
-                    updateTurnInfo();
-                });
-                
-                socket.on('move_made', (data) => {
-                    board[data.position] = data.symbol;
-                    isMyTurn = data.nextTurn === mySymbol;
-                    updateBoard();
-                    updateTurnInfo();
-                });
-                
-                socket.on('game_over', (data) => {
-                    if (data.winner === 'draw') {
-                        alert('Ничья!');
-                    } else {
-                        alert(data.winner === mySymbol ? 'Вы победили!' : 'Вы проиграли!');
-                    }
-                    document.getElementById('resetBtn').style.display = 'block';
-                });
-                
-                socket.on('error', (data) => {
-                    alert('Ошибка: ' + data.message);
-                });
-                
-                createBoard();
-            }
-            
-            function makeMove(position) {
-                if (isMyTurn && board[position] === '' && socket) {
-                    socket.emit('make_move', {
-                        gameId: currentGameId,
-                        position: position,
+            function makeMove(index) {
+                if (gameActive && isMyTurn && board[index] === '') {
+                    socket.emit('move', {
+                        room: currentRoom,
+                        index: index,
                         symbol: mySymbol
                     });
                 }
@@ -131,29 +171,71 @@ def home():
             
             function updateBoard() {
                 const cells = document.querySelectorAll('.cell');
-                cells.forEach((cell, i) => {
-                    cell.textContent = board[i];
-                    cell.className = 'cell ' + board[i];
-                    cell.style.background = board[i] ? '#f0f0f0' : '';
-                    cell.style.cursor = (isMyTurn && !board[i]) ? 'pointer' : 'default';
+                cells.forEach((cell, index) => {
+                    cell.textContent = board[index] || '';
+                    cell.className = 'cell ' + (board[index] || '');
+                    
+                    if (board[index] === 'X') {
+                        cell.classList.add('x');
+                    } else if (board[index] === 'O') {
+                        cell.classList.add('o');
+                    }
+                    
+                    cell.style.cursor = (gameActive && isMyTurn && !board[index]) ? 'pointer' : 'default';
                 });
             }
             
-            function updateTurnInfo() {
-                const turnEl = document.getElementById('turnInfo');
-                if (isMyTurn) {
-                    turnEl.innerHTML = '<span style="color:green">ВЫ</span>';
-                } else {
-                    turnEl.innerHTML = '<span style="color:red">Соперник</span>';
+            function updateGameStatus() {
+                const statusElement = document.getElementById('gameStatus');
+                const turnElement = document.getElementById('turnInfo');
+                
+                if (gameActive) {
+                    if (isMyTurn) {
+                        statusElement.textContent = 'Ваш ход!';
+                        statusElement.className = 'status my-turn';
+                        turnElement.textContent = mySymbol;
+                        turnElement.style.color = mySymbol === 'X' ? '#e74c3c' : '#3498db';
+                    } else {
+                        statusElement.textContent = 'Ход соперника...';
+                        statusElement.className = 'status waiting';
+                        const opponentSymbol = mySymbol === 'X' ? 'O' : 'X';
+                        turnElement.textContent = opponentSymbol;
+                        turnElement.style.color = opponentSymbol === 'X' ? '#e74c3c' : '#3498db';
+                    }
                 }
+            }
+            
+            function updateStatus(message, type) {
+                const statusElement = document.getElementById('status');
+                statusElement.textContent = message;
+                statusElement.className = 'status ' + type;
             }
             
             function resetGame() {
                 if (socket) {
-                    socket.emit('reset_game', {gameId: currentGameId});
-                    document.getElementById('resetBtn').style.display = 'none';
+                    socket.emit('reset', { room: currentRoom });
                 }
             }
+            
+            function leaveGame() {
+                if (socket) {
+                    socket.emit('leave', { room: currentRoom });
+                    socket.disconnect();
+                }
+                document.getElementById('gameSection').classList.add('hidden');
+                document.getElementById('connectSection').classList.remove('hidden');
+                updateStatus('Введите название комнаты', 'waiting');
+            }
+            
+            // Автоподключение при загрузке, если есть параметр room в URL
+            window.addEventListener('load', function() {
+                const urlParams = new URLSearchParams(window.location.search);
+                const roomFromUrl = urlParams.get('room');
+                if (roomFromUrl) {
+                    document.getElementById('roomInput').value = roomFromUrl;
+                    connectToGame();
+                }
+            });
         </script>
     </body>
     </html>
@@ -161,115 +243,168 @@ def home():
 
 @app.route('/health')
 def health():
-    return {'status': 'ok', 'active_games': len(games)}
+    return {'status': 'healthy', 'active_games': len(games)}
 
-# SocketIO handlers
 @socketio.on('connect')
 def handle_connect():
-    print('Клиент подключен')
+    print(f'👉 Клиент подключился: {request.sid}')
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print('Клиент отключен')
+    print(f'👋 Клиент отключился: {request.sid}')
+    # Удаляем игрока из всех комнат при отключении
+    for room, game in games.items():
+        if game['players']['X'] == request.sid:
+            game['players']['X'] = None
+            if game['players']['O']:
+                emit('player_left', room=room)
+        elif game['players']['O'] == request.sid:
+            game['players']['O'] = None
+            if game['players']['X']:
+                emit('player_left', room=room)
 
-@socketio.on('join_game')
-def handle_join_game(data):
-    game_id = data.get('gameId', 'default')
+@socketio.on('join')
+def handle_join(data):
+    room = data.get('room', 'default')
+    join_room(room)
     
-    if game_id not in games:
+    if room not in games:
         # Создаем новую игру
-        games[game_id] = {
-            'board': ['','','','','','','','',''],
-            'players': {'X': None, 'O': None},
-            'current_turn': 'X',
-            'move_count': 0
+        games[room] = {
+            'players': {'X': request.sid, 'O': None},
+            'board': ['', '', '', '', '', '', '', '', ''],
+            'current_player': 'X',
+            'game_active': False
         }
-    
-    game = games[game_id]
-    
-    # Назначаем игрока
-    if game['players']['X'] is None:
-        game['players']['X'] = request.sid
-        symbol = 'X'
-    elif game['players']['O'] is None:
-        game['players']['O'] = request.sid
-        symbol = 'O'
+        emit('joined', {
+            'symbol': 'X',
+            'message': 'Ожидаем второго игрока...'
+        })
+        print(f'🎮 Создана новая игра в комнате: {room}')
+        
     else:
-        # Комната заполнена
-        emit('error', {'message': 'Комната заполнена'})
-        return
-    
-    # Отправляем данные игроку
-    emit('player_assigned', {'symbol': symbol})
-    emit('game_state', {
-        'board': game['board'],
-        'currentTurn': game['current_turn']
-    })
-    
-    # Если оба игрока подключены, начинаем игру
-    if game['players']['X'] and game['players']['O']:
-        socketio.emit('game_state', {
-            'board': game['board'],
-            'currentTurn': game['current_turn']
-        }, room=game_id)
+        game = games[room]
+        if game['players']['O'] is None and game['players']['X'] != request.sid:
+            # Второй игрок присоединяется
+            game['players']['O'] = request.sid
+            game['game_active'] = True
+            
+            emit('joined', {
+                'symbol': 'O',
+                'message': 'Вы играете за O'
+            })
+            
+            # Уведомляем первого игрока
+            emit('player_joined', room=game['players']['X'])
+            
+            # Начинаем игру для обоих игроков
+            emit('game_start', {
+                'board': game['board'],
+                'currentPlayer': 'X'
+            }, room=room)
+            
+            print(f'🎯 Игра началась в комнате: {room} (2 игрока)')
+            
+        else:
+            # Игрок уже в комнате или комната заполнена
+            if game['players']['X'] == request.sid or game['players']['O'] == request.sid:
+                # Игрок переподключился
+                symbol = 'X' if game['players']['X'] == request.sid else 'O'
+                emit('joined', {
+                    'symbol': symbol,
+                    'message': 'Переподключение к игре'
+                })
+                if game['game_active']:
+                    emit('game_start', {
+                        'board': game['board'],
+                        'currentPlayer': game['current_player']
+                    })
+            else:
+                emit('error', {'message': 'Комната заполнена'})
 
-@socketio.on('make_move')
-def handle_make_move(data):
-    game_id = data.get('gameId')
-    position = data.get('position')
+@socketio.on('move')
+def handle_move(data):
+    room = data.get('room')
+    index = data.get('index')
     symbol = data.get('symbol')
     
-    if game_id not in games:
+    if room not in games:
         return
     
-    game = games[game_id]
+    game = games[room]
     
     # Проверяем валидность хода
-    if (game['current_turn'] != symbol or 
-        game['players'][symbol] != request.sid or
-        position < 0 or position > 8 or
-        game['board'][position] != ''):
+    if (not game['game_active'] or
+        game['current_player'] != symbol or
+        index < 0 or index > 8 or
+        game['board'][index] != ''):
         return
     
-    # Выполняем ход
-    game['board'][position] = symbol
-    game['move_count'] += 1
+    # Проверяем, что ход делает правильный игрок
+    if (symbol == 'X' and game['players']['X'] != request.sid) or \
+       (symbol == 'O' and game['players']['O'] != request.sid):
+        return
+    
+    # Делаем ход
+    game['board'][index] = symbol
     
     # Проверяем победу
     winner = check_winner(game['board'])
     if winner:
-        socketio.emit('game_over', {'winner': winner}, room=game_id)
-    elif game['move_count'] >= 9:
-        socketio.emit('game_over', {'winner': 'draw'}, room=game_id)
+        game['game_active'] = False
+        emit('game_over', {'winner': winner}, room=room)
+        # Авторестарт через 3 секунды
+        socketio.sleep(3)
+        handle_reset({'room': room})
+    elif all(cell != '' for cell in game['board']):
+        game['game_active'] = False
+        emit('game_over', {'winner': 'draw'}, room=room)
+        socketio.sleep(3)
+        handle_reset({'room': room})
     else:
         # Меняем ход
-        game['current_turn'] = 'O' if symbol == 'X' else 'X'
-        socketio.emit('move_made', {
-            'position': position,
+        game['current_player'] = 'O' if symbol == 'X' else 'X'
+        emit('move_made', {
+            'index': index,
             'symbol': symbol,
-            'nextTurn': game['current_turn']
-        }, room=game_id)
+            'nextPlayer': game['current_player']
+        }, room=room)
 
-@socketio.on('reset_game')
-def handle_reset_game(data):
-    game_id = data.get('gameId')
-    if game_id in games:
-        games[game_id] = {
-            'board': ['','','','','','','','',''],
-            'players': games[game_id]['players'],  # Сохраняем игроков
-            'current_turn': 'X',
-            'move_count': 0
-        }
-        socketio.emit('game_state', {
-            'board': games[game_id]['board'],
-            'currentTurn': 'X'
-        }, room=game_id)
+@socketio.on('reset')
+def handle_reset(data):
+    room = data.get('room')
+    if room in games and games[room]['game_active'] == False:
+        games[room]['board'] = ['', '', '', '', '', '', '', '', '']
+        games[room]['current_player'] = 'X'
+        games[room]['game_active'] = True
+        
+        emit('game_start', {
+            'board': games[room]['board'],
+            'currentPlayer': 'X'
+        }, room=room)
+
+@socketio.on('leave')
+def handle_leave(data):
+    room = data.get('room')
+    leave_room(room)
+    
+    if room in games:
+        game = games[room]
+        if game['players']['X'] == request.sid:
+            game['players']['X'] = None
+        elif game['players']['O'] == request.sid:
+            game['players']['O'] = None
+        
+        # Если оба игрока вышли, удаляем игру
+        if not game['players']['X'] and not game['players']['O']:
+            del games[room]
 
 def check_winner(board):
+    # Выигрышные комбинации
     lines = [
-        [0,1,2],[3,4,5],[6,7,8],  # rows
-        [0,3,6],[1,4,7],[2,5,8],  # columns
-        [0,4,8],[2,4,6]           # diagonals
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],  # Горизонтальные
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],  # Вертикальные
+        [0, 4, 8], [2, 4, 6]              # Диагональные
     ]
     
     for a, b, c in lines:
@@ -279,5 +414,6 @@ def check_winner(board):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"✅ Мультиплеер сервер запущен на порту {port}")
+    print(f"🚀 Сервер крестиков-ноликов запущен на порту {port}")
+    print(f"🎮 Доступен по адресу: http://localhost:{port}")
     socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
